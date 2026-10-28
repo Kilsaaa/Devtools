@@ -150,6 +150,46 @@ local function startPosition(parent)
     return x, y
 end
 
+----------------------------------------------------------------
+-- NOTICING THAT THE WINDOW WAS CLOSED
+-- The window is hidden when closed, not destroyed, so it is looked at on every update. When it goes from showing to hidden the key
+-- events on the Events tab are switched off (see EventsTab.stopKeyEvents).
+----------------------------------------------------------------
+local wasShown = false
+local visibilityLogged = false
+
+-- true if the window is showing, false if it is hidden, nil if that can't be read (several likely places are tried)
+local function windowShown()
+    if not window then return nil end
+    local candidates = { window }
+    for _, name in ipairs({ "component", "root", "frame", "layer", "native", "window", "container", "background" }) do
+        local inner = UI.try(window, name)
+        if inner then candidates[#candidates + 1] = inner end
+    end
+    local ok, value = pcall(function() return window:IsVisible() end)
+    if ok and type(value) == "boolean" then return value end
+    for _, candidate in ipairs(candidates) do
+        for _, field in ipairs({ "visibleGlobal", "visible", "isVisible" }) do
+            local state = UI.try(candidate, field)
+            if type(state) == "boolean" then return state end
+        end
+        local hidden = UI.try(candidate, "hidden")
+        if type(hidden) == "boolean" then return not hidden end
+    end
+    if not visibilityLogged then
+        visibilityLogged = true
+        note("couldn't tell whether the window is showing, so closing it won't switch the key events off; its members are: " .. membersOf(window))
+    end
+    return nil
+end
+
+local function watchWindowClosed()
+    local shown = windowShown()
+    if shown == nil then return end
+    if wasShown and not shown then pcall(EventsTab.stopKeyEvents) end
+    wasShown = shown
+end
+
 local function buildWindow()
     local parent = windowParent()
     if not parent then return end
@@ -163,7 +203,9 @@ local function buildWindow()
         x = startX, y = startY,
         resizable = true, minWidth = 520, minHeight = 400,
         destroyOnClose = false,
+        onClose = function() pcall(EventsTab.stopKeyEvents) end,   -- (used if the window offers a close callback)
     })
+    wasShown = false
 
     local tabEntries = {}
     for i, tab in ipairs(TABS) do tabEntries[i] = { text = tab.text } end
@@ -216,7 +258,7 @@ end
 
 local function destroyWindow()
     if window then pcall(function() window:Destroy() end) end
-    window, tabsRef, activeTab = nil, nil, nil
+    window, tabsRef, activeTab, wasShown = nil, nil, nil, false
     -- (a tab file from an older copy may not have a release function: that must not stop the window from closing)
     for _, tab in ipairs(TABS) do
         if type(tab.tool.release) == "function" then pcall(tab.tool.release) end
@@ -289,6 +331,7 @@ function DevTools.init()
     Layers.onChange = nil
     Event.Logic.Subscribe("devtools_window", function()
         pollTab()
+        pcall(watchWindowClosed)
         pcall(EventsTab.tick)
         pcall(InterfaceTab.tick)
         if rebuildWindow then   -- the layer was changed: draw the window again on the new layer
