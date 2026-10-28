@@ -13,7 +13,7 @@ A developer toolbox for the RuneScape 3 Client API, run as a Lua plugin. It need
    `prf` refreshes the plugin list so the game sees the folder. `pon devtools` turns the plugin on.
 3. Press **Open Dev Tools** on the Dev Tools page in the ribbon. The window opens where you left it last time.
 
-## What is in Devtools?
+## What is in DevTools?
 
 | Tab | What it does |
 | --- | --- |
