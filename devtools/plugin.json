@@ -1,0 +1,15 @@
+{
+    "name": "Dev Tools",
+    "description": "Developer tools, for Developers",
+    "version": "1.0.0",
+    "contactEmailAddress": "kilsaplugins@gmail.com",
+    "hasSettingsIcon": false,
+    "hasRibbonIcon": true,
+    "requiredDependencies": {
+        "prettyui": 6398181
+    },
+    "requiredPermissions": [],
+    "optionalPermissions": [
+        "chatAccess"
+    ]
+}
