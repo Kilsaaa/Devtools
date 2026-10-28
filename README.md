@@ -1,4 +1,4 @@
-# Dev Tools
+# DevTools
 
 A developer toolbox for the RuneScape 3 Client API, run as a Lua plugin. It needs the **PrettyUI** mod (mod.io 6398181) installed.
 
