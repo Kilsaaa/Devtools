@@ -24,3 +24,9 @@ A developer toolbox for the RuneScape 3 Client API, run as a Lua plugin. It need
 | Sprites | Search sprites by name or id (RSprite) |
 | Cheats | Run developer cheats with a chosen target and value |
 | Quick Cheats | One-click common cheats |
+
+![Configs](docs/Configs.png)
+![Events](docs/Events.png)
+![Interface](docs/Interface.png)
+![Overlays](docs/Overlays.png)
+![Sprites](docs/Sprites.png)
