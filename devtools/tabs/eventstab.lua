@@ -343,6 +343,17 @@ function EventsTab.tick()
     end
 end
 
+-- the Dev Tools window was closed: the key events fire on every key press, so they are not left running with nothing to look at them
+local KEY_EVENTS = { KeyDown = true, KeyUp = true, KeyTyped = true }
+function EventsTab.stopKeyEvents()
+    for _, def in ipairs(EVENTS) do
+        if KEY_EVENTS[def.name] and running[def.name] then
+            turnOff(def)
+            refreshRow(def)
+        end
+    end
+end
+
 -- the plugin is shutting down: remove every listener
 function EventsTab.shutdown()
     for _, def in ipairs(EVENTS) do
