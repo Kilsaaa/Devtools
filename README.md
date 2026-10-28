@@ -4,7 +4,7 @@ A developer toolbox for the RuneScape 3 Client API, run as a Lua plugin. It need
 
 ## Running it
 
-1. Put the devtools folder in your plugin development folder (\Jagex\Runescape-Beta\).
+1. Put the devtools folder in your plugin development folder (\Jagex\Runescape-Beta\\).
 2. In the game, open the developer console and type:
    ```
    prf
