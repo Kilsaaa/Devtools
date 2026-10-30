@@ -40,6 +40,8 @@ local controls = {}               -- list, details, search, copyBox, countText, 
 local typeKey = Configs.TYPES[1].key
 local displayMode = 1             -- how results are named (Configs.DISPLAY_MODES); remembered between sessions
 local selected = nil              -- config name picked in the list
+local typedSearch = ""
+local listScroll = {}
 local detail = {}                 -- { field, value } pairs of the selected config
 local showResults = true          -- false after Reset, until you type or press Search
 local resultFilter = ""            -- what is typed in the "filter these results" box
@@ -161,6 +163,13 @@ end
 ----------------------------------------------------------------
 -- BUTTONS AND DROPDOWNS
 ----------------------------------------------------------------
+local function typeIndex()
+    for index, def in ipairs(Configs.TYPES) do
+        if def.key == typeKey then return index end
+    end
+    return 1
+end
+
 local function onTypeChosen(_, chosenId)
     local def = Configs.TYPES[chosenId]
     if not def then return end
@@ -237,7 +246,7 @@ end
 function ConfigsTab.build(page)
     page:AddText({ text = "Type" })
     page:AddComboBox({
-        entries = UI.dropdownEntries(Configs.TYPES), selectedID = 1, onChange = onTypeChosen, width = DROPDOWN_WIDTH,
+        entries = UI.dropdownEntries(Configs.TYPES), selectedID = typeIndex(), onChange = onTypeChosen, width = DROPDOWN_WIDTH,
     })
 
     page:AddText({ text = "Filter" })
@@ -290,11 +299,20 @@ function ConfigsTab.build(page)
     controls.copyBox = page:AddTextField({ placeholder = "Click a property above", maxLength = 9999, width = COPY_WIDTH })
     controls.statusText = page:AddText({ text = "" })
 
+    pcall(function() controls.search:SetText(typedSearch, false) end)
+    pcall(function() controls.resultFilter:SetText(resultFilter, false) end)
     refreshResults()
+    showDetails()
+    if listScroll.list then pcall(function() controls.list:SetScrollPosition(listScroll.list) end) end
+    if listScroll.details then pcall(function() controls.details:SetScrollPosition(listScroll.details) end) end
 end
 
 -- The window was closed for good: forget its controls
 function ConfigsTab.release()
+    -- tab gets rebuilt every time its shown so typed text has to live here
+    if controls.search then typedSearch = UI.fieldText(controls.search) end
+    if controls.list then listScroll.list = controls.list.scrollY end
+    if controls.details then listScroll.details = controls.details.scrollY end
     controls = {}
 end
 

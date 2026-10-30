@@ -298,6 +298,7 @@ function EventsTab.build(page)
         width = 250, placeholder = "part of a var name (empty = all)", inline = true, columnGap = 0,
         onChange = function(field) varFilter = UI.fieldText(field) or "" end,
     })
+    pcall(function() controls.filter:SetText(varFilter, false) end)
     -- the button sits in the top right corner, on the same line (the empty text pushes it across)
     page:AddText({ text = "", width = 290, inline = true, columnGap = 0 })
     page:AddSimpleButton("Turn everything off", turnAllOff, {

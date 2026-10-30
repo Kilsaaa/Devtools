@@ -57,7 +57,6 @@ local loadedOnly = false
 local filterText = ""
 local filterBy = "name"           -- "name" or "content" (the Filter by drop-down)
 local filterWait = nil
-local keyWasDown = false
 local scanned = false
 
 local highlight = false          -- the checkbox
@@ -341,7 +340,6 @@ end
 -- SCAN
 ----------------------------------------------------------------
 local function scan(source)
-    if not controls.statusText then return end
     local interfaces = Names.interfaces()
     local seen, found = {}, {}
     for number, entry in pairs(interfaces) do
@@ -360,22 +358,16 @@ local function scan(source)
     end)
     allRows = found
     scanned = true
+    -- f9 can scan when this page isnt built, results get kept and drawn when it opens
+    if not controls.statusText then return end
     applyFilter()
     showInfo()
     status(source == "hotkey" and ("Scanned with " .. HOTKEY) or "")
 end
 
-local function onDraw()
-    local ok, down = pcall(function()
-        return Keyboard.IsAvailable() and not Keyboard.IsBlocked() and Keyboard.IsGameKeyDown(GameKey[HOTKEY])
-    end)
-    down = ok and down or false
-    if down and not keyWasDown then
-        keyWasDown = true
-        pcall(scan, "hotkey")
-    elseif not down then
-        keyWasDown = false
-    end
+local function onKeyDown(event)
+    if event.isRepeat or event.gameKey ~= GameKey[HOTKEY] or Keyboard.IsBlocked() then return end
+    pcall(scan, "hotkey")
 end
 
 -- empties the list (the filter text and the picked options are left as they are)
@@ -440,9 +432,10 @@ function LookupTab.build(page)
         placeholder = "Filter text", maxLength = 60, width = FILTER_WIDTH, columnGap = 10, marginTop = 10,
         onChange = function(field) filterText = UI.fieldText(field); filterWait = nil; applyFilter() end,
     })
+    pcall(function() controls.filter:SetText(filterText, false) end)
     pcall(function()
         controls.filterBy = page:AddComboBox({
-            entries = { { label = "Filter by: Name", id = 1 }, { label = "Filter by: Content", id = 2 } }, selectedID = 1,
+            entries = { { label = "Filter by: Name", id = 1 }, { label = "Filter by: Content", id = 2 } }, selectedID = filterBy == "content" and 2 or 1,
             width = BY_WIDTH, inline = true, columnGap = 10,
             onChange = function(_, chosenId) filterBy = chosenId == 2 and "content" or "name"; applyFilter() end,
         })
@@ -454,7 +447,6 @@ function LookupTab.build(page)
     controls.countText = page:AddText({ text = "", width = COUNT_WIDTH, inline = true, columnGap = 0 })
 
     -- under the list: Open in tree, and the Highlight Selected checkbox with its colour
-    highlight = false                -- always starts off
     colour = Settings.get("lookupColour", colour)
     controls.openButton = page:AddFancyButton("Open in tree", onOpenClicked, {
         variant = "positive", width = 130, columnGap = OPEN_GAP, marginTop = 10,
@@ -483,15 +475,13 @@ function LookupTab.build(page)
     controls.infoText = page:AddText({ text = "Pick an interface" })
     controls.statusText = page:AddText({ text = controls.view and "" or "(the drawn list couldn't be made, so a plain list is used)" })
 
-    keyWasDown = false
-    pcall(function() Event.Draw.Subscribe(HOTKEY_KEY, onDraw) end)
     if scanned then applyFilter() end
     showInfo()
 end
 
 -- the filter waits until you stop typing (called from the Interface tab's update)
 function LookupTab.tick()
-    -- leaving this page (another sub-tab, another tab, or closing the window) turns the highlight off, and showing it
+    -- leaving this page for another sub-tab turns the highlight off, and showing it
     -- again turns it back on if it was on
     pcall(function()
     if controls.scan then
@@ -539,16 +529,21 @@ function LookupTab.reset()
     if controls.statusText then fillList(); showInfo(); status("") end
 end
 
+-- f9 is always listening since its for catching whats open while hovering, page might not be built
+function LookupTab.start()
+    Event.KeyDown.Subscribe(HOTKEY_KEY, onKeyDown)
+end
+
 function LookupTab.release()
-    pcall(function() Event.Draw.Unsubscribe(HOTKEY_KEY) end)
-    stopPulse()
+    -- just the rectangle, highlight keeps running and draws a new one next frame
+    destroyPulse()
     if controls.view then pcall(function() controls.view:Destroy() end) end
     controls = {}
-    rows, selected = {}, nil
+    rows = {}
 end
 
 function LookupTab.shutdown()
-    pcall(function() Event.Draw.Unsubscribe(HOTKEY_KEY) end)
+    pcall(function() Event.KeyDown.Unsubscribe(HOTKEY_KEY) end)
     stopPulse()
 end
 
