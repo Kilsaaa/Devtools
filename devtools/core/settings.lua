@@ -35,7 +35,7 @@ function Settings.set(key, value)
 end
 
 -- keys that may have been saved by an earlier session
-local KNOWN = { "winRX", "winRY", "pos2RX", "pos2RY", "building", "skipTab", "early", "noWatch", "creating", "showSelected", "showColour", "npcColour", "locColour", "tileColour", "boxColour", "tileOn", "savedX", "savedZ", "savedLevel" }
+local KNOWN = { "winRX", "winRY", "winWidth", "winHeight", "pos2RX", "pos2RY", "building", "skipTab", "early", "noWatch", "creating", "showSelected", "showColour", "npcColour", "locColour", "tileColour", "boxColour", "tileOn", "savedX", "savedZ", "savedLevel" }
 
 function Settings.reset()
     for _, key in ipairs(KNOWN) do Settings.clear(key) end

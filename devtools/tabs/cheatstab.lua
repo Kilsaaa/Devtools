@@ -96,6 +96,8 @@ local VALUE_WIDTH    = 520
 local controls = {}               -- list, search, countText, valueField, preview, statusText
 local cheatIndex = 1
 local selected = nil              -- target picked in the list
+local typedSearch = ""
+local listScroll = {}
 local pageIndex = 1               -- which page of the results is showing
 
 local updateToggle                -- defined further down (the pick handlers call it)
@@ -335,8 +337,10 @@ function CheatsTab.build(page)
     local savedValue = Settings.get("cheatValue", nil)
     if not savedValue and cheat().label == "Give item" then savedValue = 1 end
     if savedValue then pcall(function() controls.valueField:SetText(tostring(savedValue), false) end) end
+    pcall(function() controls.search:SetText(typedSearch, false) end)
 
     refreshResults()
+    if listScroll.list then pcall(function() controls.list:SetScrollPosition(listScroll.list) end) end
     updatePreview()
     updateTargetUi()
     updateToggle()
@@ -347,6 +351,9 @@ function CheatsTab.reset()
 end
 
 function CheatsTab.release()
+    -- tab gets rebuilt every time its shown so typed text has to live here
+    if controls.search then typedSearch = UI.fieldText(controls.search) end
+    if controls.list then listScroll.list = controls.list.scrollY end
     controls = {}
 end
 

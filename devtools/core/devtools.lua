@@ -53,9 +53,11 @@ local activeTab = nil             -- the tab last seen showing
 local statusText = nil            -- the line on the ribbon page
 local rebuildWindow = false   -- set when the layer changed: the window is rebuilt on the next update
 local tabsRef = nil
+local pendingTab = nil
 local startTab = 1            -- the tab to open on when the window is built
 
 local skipTab = 0             -- the tab switched off by the crash guard (see checkMarkers)
+local buildTab
 
 local function note(text)
     if type(log) == "function" then pcall(log, "[DevTools] " .. text) end
@@ -133,6 +135,12 @@ local function savePosition()
     if type(width) ~= "number" or type(height) ~= "number" then return end
     Settings.set("winRX", math.floor(x - parentX - width / 2) + POSITION_OFFSET)
     Settings.set("winRY", math.floor(y - parentY - height / 2) + POSITION_OFFSET)
+    local root = UI.try(window, "root")
+    local windowWidth, windowHeight = root and UI.try(root, "width"), root and UI.try(root, "height")
+    if type(windowWidth) == "number" and type(windowHeight) == "number" then
+        Settings.set("winWidth", windowWidth)
+        Settings.set("winHeight", windowHeight)
+    end
 end
 
 -- where the window should open: the saved spot (kept on the screen), or centred
@@ -183,11 +191,49 @@ local function windowShown()
     return nil
 end
 
+local destroyWindow
+
 local function watchWindowClosed()
     local shown = windowShown()
     if shown == nil then return end
-    if wasShown and not shown then pcall(EventsTab.stopKeyEvents) end
+    if wasShown and not shown then
+        pcall(EventsTab.stopKeyEvents)
+        -- closing destroys the window so save position and tab first
+        pcall(savePosition)
+        startTab = activeTab or startTab
+        destroyWindow()
+        return
+    end
     wasShown = shown
+end
+
+local tabView = nil
+local tabScroll = {}
+
+local function destroyTabView(index)
+    if not tabView then return end
+    local tool = TABS[index] and TABS[index].tool
+    if tool and tool.onHide then pcall(tool.onHide) end
+    if tool and type(tool.release) == "function" then pcall(tool.release) end
+    tabScroll[index] = tabView.scrollY
+    pcall(function() tabView:Destroy() end)
+    tabView = nil
+end
+
+buildTab = function(index)
+    local tab = TABS[index]
+    if not (tab and tabsRef) then return end
+    -- each tab gets its own view so leaving it can destroy everything and free the ids for other plugins
+    tabView = prettyui.SimpleView.new(tabsRef:GetPage(index).content, { width = 0, height = 0, widthAnchor = 1.0, heightAnchor = 1.0 })
+    if index == skipTab then
+        tabView:AddText({ text = "This tab crashed the client when it was built last time, so it is switched off." })
+        tabView:AddText({ text = "Use 'Reset to defaults' on the Dev Tools ribbon page to switch it back on." })
+        return
+    end
+    Settings.set("building", index)
+    tab.tool.build(tabView)
+    Settings.set("building", 0)
+    if tabScroll[index] then tabView:SetScrollPosition(tabScroll[index]) end
 end
 
 local function buildWindow()
@@ -198,7 +244,7 @@ local function buildWindow()
     -- where it was when the plugin last shut down (centred the first time)
     local startX, startY = startPosition(parent)
     window = prettyui.Window.new(parent, {
-        title = WINDOW_TITLE, width = WINDOW_WIDTH, height = WINDOW_HEIGHT,
+        title = WINDOW_TITLE, width = Settings.get("winWidth", WINDOW_WIDTH), height = Settings.get("winHeight", WINDOW_HEIGHT),
         xAnchor = 0.5, yAnchor = 0.5,
         x = startX, y = startY,
         resizable = true, minWidth = 520, minHeight = 400,
@@ -210,55 +256,31 @@ local function buildWindow()
     local tabEntries = {}
     for i, tab in ipairs(TABS) do tabEntries[i] = { text = tab.text } end
     local tabs = window:AddTabs(tabEntries, {
-        height = TAB_HEIGHT, activeIndex = startTab,
-        onChange = function(_, index) DevTools.onTabChanged(index) end,   -- (if the tabs report changes, the poll below isn't needed)
+        height = TAB_HEIGHT, activeIndex = startTab, scrollable = false,
+        -- waits for next update, destroying and building tabs inside a click can crash the client
+        onChange = function(_, index) pendingTab = index end,
     })
-    for i, tab in ipairs(TABS) do
-        local page = tabs:GetPage(i)
-        if i == skipTab then
-            page:AddText({ text = "This tab crashed the client when it was built last time, so it is switched off." })
-            page:AddText({ text = "Use 'Reset to defaults' on the Dev Tools ribbon page to switch it back on." })
-        else
-            Settings.set("building", i)
-            tab.tool.build(page)
-            Settings.set("building", 0)
-        end
-    end
-    activeTab = startTab
     tabsRef = tabs
+    buildTab(startTab)
+    activeTab = startTab
     if TABS[startTab] and TABS[startTab].tool.onShow then pcall(TABS[startTab].tool.onShow) end
 
     window:Show()   -- shows and raises it above everything else on its layer
 end
 
--- Keeps track of which tab is showing (changing tabs leaves every tab as it was)
+-- Keeps track of which tab is showing: only that tab is built
 function DevTools.onTabChanged(index)
     if type(index) ~= "number" or index == activeTab then return end
-    local old = activeTab
+    destroyTabView(activeTab)
     activeTab = index
-    if TABS[old] and TABS[old].tool.onHide then pcall(TABS[old].tool.onHide) end
+    pcall(buildTab, index)
     if TABS[index] and TABS[index].tool.onShow then pcall(TABS[index].tool.onShow) end
-    if TABS[index] then pcall(TABS[index].tool == InterfaceTab and InterfaceTab.tabShown or InterfaceTab.tabHidden) end
 end
 
--- the tabs may not announce a change, so the active one is also looked up every so often
-local function pollTab()
-    if not tabsRef then return end
-    local index
-    for _, getter in ipairs({
-        function() return tabsRef:GetActiveIndex() end,
-        function() return tabsRef.activeIndex end,
-        function() return tabsRef:GetActiveTab() end,
-    }) do
-        local ok, value = pcall(getter)
-        if ok and type(value) == "number" then index = value; break end
-    end
-    if index then DevTools.onTabChanged(index) end
-end
-
-local function destroyWindow()
+destroyWindow = function()
+    destroyTabView(activeTab)
     if window then pcall(function() window:Destroy() end) end
-    window, tabsRef, activeTab, wasShown = nil, nil, nil, false
+    window, tabsRef, activeTab, pendingTab, wasShown = nil, nil, nil, nil, false
     -- (a tab file from an older copy may not have a release function: that must not stop the window from closing)
     for _, tab in ipairs(TABS) do
         if type(tab.tool.release) == "function" then pcall(tab.tool.release) end
@@ -326,11 +348,16 @@ function DevTools.init()
 
     Configs.start()
     pcall(OverlaysTab.start)
+    pcall(InterfaceTab.start)
     -- (choosing another layer in the Overlays tab does not rebuild the window: destroying and recreating it from inside
     -- that dropdown moved it back to the centre and crashed the client. It uses the chosen layer the next time it is opened.)
     Layers.onChange = nil
     Event.Logic.Subscribe("devtools_window", function()
-        pollTab()
+        if pendingTab then
+            local index = pendingTab
+            pendingTab = nil
+            DevTools.onTabChanged(index)
+        end
         pcall(watchWindowClosed)
         pcall(EventsTab.tick)
         pcall(InterfaceTab.tick)

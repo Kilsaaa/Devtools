@@ -64,6 +64,8 @@ local expanded = {}               -- key -> true for the tree rows that are open
 local selected = nil              -- the entry chosen on the left
 local hiddenByUs = {}             -- components this tab has hidden
 local chosen = nil                -- the component shown in the details list
+local typedLua = ""
+local typedInterface = ""
 local originals = {}               -- component -> { property key -> its value before this tab changed it }
 local editOrder = {}              -- the edited components, in the order they were first edited
 local editInfo = {}               -- component -> the Lua that finds it again
@@ -1002,7 +1004,7 @@ end
 local function resetTab()
     revertAll()
     interfaceID, tree, byKey, selected = nil, {}, {}, nil
-    filterText, expanded = "", {}
+    filterText, expanded, typedInterface = "", {}, ""
     chosen, editing, detail = nil, nil, {}
     for _, name in ipairs({ "input", "filter", "copyBox", "editField" }) do
         local control = controls[name]
@@ -1058,26 +1060,18 @@ end
 -- CALLED BY THE WINDOW
 ----------------------------------------------------------------
 local LOAD_KEY = "F8"              -- pressing it loads the interface, like the Load button
-local loadKeyWasDown = false
-local function onLoadKeyDraw()
-    local ok, down = pcall(function()
-        return Keyboard.IsAvailable() and not Keyboard.IsBlocked() and Keyboard.IsGameKeyDown(GameKey[LOAD_KEY])
-    end)
-    down = ok and down or false
-    if down and not loadKeyWasDown then
-        loadKeyWasDown = true
-        pcall(loadInterface)
-    elseif not down then
-        loadKeyWasDown = false
-    end
+local function onLoadKeyDown(event)
+    if event.isRepeat or event.gameKey ~= GameKey[LOAD_KEY] or Keyboard.IsBlocked() then return end
+    pcall(loadInterface)
 end
 local SUB_TAB_HEIGHT = 750       -- the area under the Tree / Lookup tabs
 
 local subIndex = 1                -- the sub-tab showing (1 Tree, 2 Lookup)
+local TREE_SUB_TAB, LOOKUP_SUB_TAB = 1, 2
+local subTabs, subView, pendingSubTab, pendingOpen, lookupScroll = nil, nil, nil, nil, nil
 
 local function buildTree(page)
-    loadKeyWasDown = false
-    pcall(function() Event.Draw.Subscribe("devtools_interface_loadkey", onLoadKeyDraw) end)
+    pcall(function() Event.KeyDown.Subscribe("devtools_interface_loadkey", onLoadKeyDown) end)
     page:AddText({ text = "Interface id", width = 100, columnGap = 0 })
     controls.input = page:AddTextField({
         placeholder = "e.g. 1473", maxLength = 8, width = INPUT_WIDTH, inline = true, columnGap = 10, onSubmit = loadInterface,
@@ -1094,6 +1088,8 @@ local function buildTree(page)
         placeholder = "Filter components by text, item, sprite, type or id", maxLength = 40, width = leftFilterWidth, columnGap = 10,
         onChange = function(field) filterText = UI.fieldText(field); filterWait = 2 end,
     })
+    pcall(function() controls.filter:SetText(filterText, false) end)
+    pcall(function() controls.input:SetText(typedInterface, false) end)
     page:AddSimpleButton("Clear", function()
         pcall(function() controls.filter:SetText("", false) end)
         filterText = ""; filterWait = nil; refreshLeft()
@@ -1235,6 +1231,7 @@ local function buildTree(page)
     controls.luaInput = page:AddTextField({
         placeholder = "Paste Lua edits here", maxLength = 9999, width = PANEL_WIDTH - 90 - 90, inline = true, columnGap = 0, onSubmit = runLua,
     })
+    pcall(function() controls.luaInput:SetText(typedLua, false) end)
     controls.luaRun = page:AddSimpleButton("Run", runLua, {
         width = 70, inline = true, columnGap = 10, tooltip = "Runs the Lua in the box. Edits copied from the box on the left are applied and can be reverted",
     })
@@ -1246,51 +1243,100 @@ local function buildTree(page)
     end
 
     refreshLeft()
+    local editedName = editing and editing[1]
     showDetails(chosen)
-    showEditing(nil)
+    local editedRow = nil
+    for _, pair in ipairs(detail) do
+        if pair[1] == editedName then editedRow = pair end
+    end
+    showEditing(editedRow)
+end
+
+local function releaseTree()
+    if controls.luaInput then typedLua = UI.fieldText(controls.luaInput) end
+    if controls.input then typedInterface = UI.fieldText(controls.input) end
+    pcall(function() Event.KeyTyped.Unsubscribe(TYPING_KEY) end)
+    pcall(function() Event.KeyDown.Unsubscribe("devtools_interface_loadkey") end)
+    if controls.treeView then pcall(function() controls.treeView:Destroy() end) end
+    if controls.detailsView then pcall(function() controls.detailsView:Destroy() end) end
+    -- just the rectangle, highlight keeps running and draws a new one next frame
+    destroyPulse()
+    controls, signatures, filterWait = {}, {}, nil
+end
+
+local function buildSubTab(index)
+    subView = prettyui.SimpleView.new(subTabs:GetPage(index).content, {
+        width = 0, height = 0, widthAnchor = 1.0, heightAnchor = 1.0, scrollable = index == LOOKUP_SUB_TAB,
+    })
+    if index == LOOKUP_SUB_TAB then
+        LookupTab.build(subView)
+        if lookupScroll then subView:SetScrollPosition(lookupScroll) end
+    else
+        buildTree(subView)
+    end
+end
+
+local function openPendingInterface()
+    local number = pendingOpen
+    pendingOpen = nil
+    if controls.input then pcall(function() controls.input:SetText(tostring(number), false) end) end
+    loadInterface()
+    -- pick the top row and open what is under it
+    local top = tree.interfaceRoots and tree.interfaceRoots[1] or tree[1]
+    if top then
+        selected = top
+        expanded[top.key] = true
+        showDetails(top.component)
+        refreshLeft()
+    end
+end
+
+local function switchSubTab(index)
+    if subView then
+        if subIndex == LOOKUP_SUB_TAB then
+            pcall(LookupTab.leave)
+            pcall(LookupTab.release)
+            lookupScroll = subView.scrollY
+        else
+            pcall(releaseTree)
+        end
+        pcall(function() subView:Destroy() end)
+        subView = nil
+    end
+    subIndex = index
+    buildSubTab(index)
+    if index == LOOKUP_SUB_TAB then pcall(LookupTab.enter) end
 end
 
 -- the tab holds two sub-tabs: Tree (the interface browser above) and Lookup (find a component by its name)
 function InterfaceTab.build(page)
-    local sub = page:AddTabs({ { text = "Tree" }, { text = "Lookup" } }, {
-        height = SUB_TAB_HEIGHT, activeIndex = 1,
+    subTabs = page:AddTabs({ { text = "Tree" }, { text = "Lookup" } }, {
+        height = SUB_TAB_HEIGHT, activeIndex = subIndex, scrollable = false,
         onChange = function(_, index)
-            subIndex = index; typing = false
-            -- leaving the Lookup sub-tab turns its highlight off; coming back turns it on again if it was on
-            if index ~= 2 then pcall(LookupTab.leave) else pcall(LookupTab.enter) end
+            -- same as main tabs, swap waits for next update
+            pendingSubTab = index; typing = false
         end,
     })
-    -- no scrollbar on the Tree page (nor on the tab page holding it): everything fits in the window
-    for _, target in ipairs({ page, sub:GetPage(1) }) do
-        pcall(function() target:SetScrollable(false) end)
-    end
-    buildTree(sub:GetPage(1))
-    LookupTab.build(sub:GetPage(2))
+    -- no scrollbar on the tab page holding it: everything fits in the window
+    pcall(function() page:SetScrollable(false) end)
+    buildSubTab(subIndex)
 
     -- "Open in tree" on the Lookup sub-tab: show the Tree sub-tab and load that interface in it
     LookupTab.openInTree = function(number)
-        if controls.input then pcall(function() controls.input:SetText(tostring(number), false) end) end
-        loadInterface()
-        -- pick the top row and open what is under it
-        local top = tree.interfaceRoots and tree.interfaceRoots[1] or tree[1]
-        if top then
-            selected = top
-            expanded[top.key] = true
-            showDetails(top.component)
-            refreshLeft()
-        end
-        local switched = false
-        for _, method in ipairs({ "SetActiveIndex", "SetActiveTab", "SetActive", "SelectTab", "SetTab", "Select" }) do
-            if not switched and type(sub[method]) == "function" and pcall(function() sub[method](sub, 1) end) then switched = true end
-        end
-        if switched then return "Opened interface " .. number .. " in the Tree tab" end
-        return "Loaded interface " .. number .. " in the Tree tab (click the Tree tab to see it)"
+        -- tree isnt built yet so this loads once it is, see InterfaceTab.tick
+        pendingOpen = number
+        subTabs:SetActive(TREE_SUB_TAB)
+        return "Opened interface " .. number .. " in the Tree tab"
     end
 end
 
 -- called by the window when another tab is shown
-function InterfaceTab.tabHidden() typing = false; pcall(LookupTab.leave) end
-function InterfaceTab.tabShown() if subIndex == 2 then pcall(LookupTab.enter) end end
+function InterfaceTab.onHide() typing = false end
+function InterfaceTab.onShow() if subIndex == 2 then pcall(LookupTab.enter) end end
+
+function InterfaceTab.start()
+    LookupTab.start()
+end
 
 function InterfaceTab.reset()
     resetTab()
@@ -1299,18 +1345,22 @@ end
 
 function InterfaceTab.release()
     typing = false
-    pcall(function() Event.KeyTyped.Unsubscribe(TYPING_KEY) end)
-    pcall(function() Event.Draw.Unsubscribe("devtools_interface_loadkey") end)
+    if subView and subIndex == LOOKUP_SUB_TAB then lookupScroll = subView.scrollY end
+    releaseTree()
     LookupTab.release()
-    if controls.treeView then pcall(function() controls.treeView:Destroy() end) end
-    if controls.detailsView then pcall(function() controls.detailsView:Destroy() end) end
-    stopPulse()
-    controls, signatures, filterWait = {}, {}, nil
+    if subView then pcall(function() subView:Destroy() end) end
+    subView, subTabs, pendingSubTab, pendingOpen = nil, nil, nil, nil
 end
 
 -- runs on every game update: queued key presses, sprite names, the tree, and the left filter once typing pauses
 function InterfaceTab.tick()
     clickTick = clickTick + 1
+    if pendingSubTab then
+        local index = pendingSubTab
+        pendingSubTab = nil
+        pcall(switchSubTab, index)
+    end
+    if pendingOpen and subIndex == TREE_SUB_TAB and controls.input then pcall(openPendingInterface) end
     pcall(processKeys)
     pcall(LookupTab.tick)
     if Info.stepSpriteNames() and controls.details and chosen then pcall(showDetails, chosen) end
@@ -1324,7 +1374,7 @@ end
 function InterfaceTab.shutdown()
     typing = false
     pcall(function() Event.KeyTyped.Unsubscribe(TYPING_KEY) end)
-    pcall(function() Event.Draw.Unsubscribe("devtools_interface_loadkey") end)
+    pcall(function() Event.KeyDown.Unsubscribe("devtools_interface_loadkey") end)
     stopPulse()
     LookupTab.shutdown()
     revertAll()
