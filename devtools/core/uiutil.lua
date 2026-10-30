@@ -19,6 +19,24 @@ function UI.setText(control, text)
     if control then control.content = text end
 end
 
+local hoverTip = nil
+
+function UI.addHoverTip(page, control, text)
+    if not text then return end
+    local root = UI.try(control, "root")
+    local target = root or control
+    if not root then target.enabled = true end
+    target.clickthrough = false
+    target:Subscribe(ui.Hook.ONMOUSEOVER, "devtools_hover_tip", function(_, x, y)
+        if hoverTip and hoverTip.target == target then return true end
+        if hoverTip then hoverTip:Destroy() end
+        hoverTip = prettyui.Tooltip.attach(target, page.content, text, { followCursor = not root })
+        hoverTip.cursorX, hoverTip.cursorY = x, y
+        hoverTip:Show()
+        return true
+    end)
+end
+
 -- A divider with less space above and below it (the default leaves a lot of padding)
 UI.TIGHT_DIVIDER = { marginTop = -16, marginBottom = -8 }
 

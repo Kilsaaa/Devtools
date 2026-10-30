@@ -301,9 +301,10 @@ function EventsTab.build(page)
     pcall(function() controls.filter:SetText(varFilter, false) end)
     -- the button sits in the top right corner, on the same line (the empty text pushes it across)
     page:AddText({ text = "", width = 290, inline = true, columnGap = 0 })
-    page:AddSimpleButton("Turn everything off", turnAllOff, {
-        width = 190, inline = true, columnGap = 0, tooltip = "Stop every listener",
+    local allOff = page:AddSimpleButton("Turn everything off", turnAllOff, {
+        width = 190, inline = true, columnGap = 0,
     })
+    UI.addHoverTip(page, allOff, "Stop every listener")
     page:AddDivider(UI.TIGHT_DIVIDER)
 
     rows = {}
@@ -313,12 +314,13 @@ function EventsTab.build(page)
 
         -- label, then its button; the second column is on the same line as the first
         local label = page:AddText({
-            text = labelText(def), width = LABEL_WIDTH, columnGap = 0, inline = column > 0, tooltip = TIPS[def.name],
+            text = labelText(def), width = LABEL_WIDTH, columnGap = 0, inline = column > 0,
         })
         local button = page:AddFancyButton("Turn on", function() toggle(def) end, {
             variant = "positive", width = BUTTON_WIDTH, inline = true, columnGap = last and 0 or COLUMN_GAP,
-            tooltip = TIPS[def.name],
         })
+        UI.addHoverTip(page, label, TIPS[def.name])
+        UI.addHoverTip(page, button, TIPS[def.name])
         rows[def.name] = { label = label, button = button }
         refreshRow(def)
     end
